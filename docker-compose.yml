@@ -1,0 +1,8 @@
+services:
+  pii-filter:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
