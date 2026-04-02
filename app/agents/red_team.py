@@ -7,14 +7,17 @@ Red Team 에이전트: 합성 데이터 생성
 from __future__ import annotations
 
 import json
-import random
+import logging
 import asyncio
 from datetime import datetime
 from pathlib import Path
+from typing import Tuple, List, Optional, Callable
 
 import anthropic
 
 from ..config import ANTHROPIC_API_KEY, HAIKU_MODEL, DATA_DIR
+
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """당신은 개인정보 필터링 시스템을 테스트하기 위한 합성 데이터 생성기입니다.
 
@@ -74,57 +77,109 @@ PII 포함 데이터 생성 시:
 JSON 배열만 응답하세요. 다른 텍스트는 포함하지 마세요."""
 
 
+def _extract_json_array(text: str) -> list:
+    """응답 텍스트에서 JSON 배열 추출"""
+    text = text.strip()
+
+    # 코드블록 제거
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("["):
+                try:
+                    return json.loads(part)
+                except json.JSONDecodeError:
+                    continue
+
+    # 직접 JSON 파싱
+    if text.startswith("["):
+        return json.loads(text)
+
+    # [ 부터 ] 까지 추출
+    start = text.find("[")
+    end = text.rfind("]")
+    if start != -1 and end != -1:
+        return json.loads(text[start:end + 1])
+
+    raise json.JSONDecodeError("No JSON array found", text, 0)
+
+
 async def generate_synthetic_data(
     count: int = 1000,
     level: int = 3,
     batch_size: int = 50,
-    on_progress: callable = None,
-) -> tuple[list[dict], Path]:
+    on_progress: Optional[Callable] = None,
+) -> Tuple[List[dict], Path]:
     """
     합성 데이터를 생성하고 파일로 저장.
     Returns: (생성된 데이터 리스트, 저장 파일 경로)
     """
+    if not ANTHROPIC_API_KEY:
+        raise ValueError(
+            "ANTHROPIC_API_KEY가 설정되지 않았습니다. "
+            ".env 파일에 ANTHROPIC_API_KEY=your-key 를 설정하세요."
+        )
+
     client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
     all_data = []
     remaining = count
+    errors = []
+    max_retries = 2
 
     while remaining > 0:
         batch = min(batch_size, remaining)
         prompt = _build_generation_prompt(batch, level)
 
-        try:
-            response = await client.messages.create(
-                model=HAIKU_MODEL,
-                max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-            )
+        success = False
+        for attempt in range(max_retries + 1):
+            try:
+                logger.info(f"배치 생성 요청: {batch}개 (남은: {remaining}, 시도: {attempt + 1})")
+                response = await client.messages.create(
+                    model=HAIKU_MODEL,
+                    max_tokens=4096,
+                    system=SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": prompt}],
+                )
 
-            content = response.content[0].text.strip()
-            # JSON 배열 추출
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
+                content = response.content[0].text
+                batch_data = _extract_json_array(content)
 
-            batch_data = json.loads(content)
-            if isinstance(batch_data, list):
-                all_data.extend(batch_data)
-            remaining -= batch
+                if isinstance(batch_data, list) and len(batch_data) > 0:
+                    all_data.extend(batch_data)
+                    logger.info(f"배치 생성 완료: {len(batch_data)}개 (누적: {len(all_data)})")
+                    success = True
+                    break
+                else:
+                    logger.warning(f"빈 배치 결과, 재시도...")
 
-        except (json.JSONDecodeError, Exception) as e:
-            # 파싱 실패 시 재시도하지 않고 다음 배치로
-            remaining -= batch
+            except json.JSONDecodeError as e:
+                logger.warning(f"JSON 파싱 실패 (시도 {attempt + 1}): {e}")
+            except anthropic.APIError as e:
+                logger.error(f"Anthropic API 오류: {e}")
+                errors.append(str(e))
+                break  # API 오류는 재시도 불필요 (인증 등)
+            except Exception as e:
+                logger.error(f"예상치 못한 오류: {e}")
+                errors.append(str(e))
+
+        remaining -= batch
 
         if on_progress:
             await on_progress(count - remaining, count)
 
+    if len(all_data) == 0 and errors:
+        raise RuntimeError(f"합성 데이터 생성 실패: {'; '.join(errors)}")
+
     # 파일 저장
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filepath = DATA_DIR / f"synthetic_{timestamp}_{count}.jsonl"
+    filepath = DATA_DIR / f"synthetic_{timestamp}_{len(all_data)}.jsonl"
 
     with open(filepath, "w", encoding="utf-8") as f:
         for item in all_data:
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
+    logger.info(f"합성 데이터 저장: {filepath} ({len(all_data)}개)")
     return all_data, filepath

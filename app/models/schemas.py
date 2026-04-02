@@ -1,5 +1,5 @@
 """Pydantic 스키마 정의"""
-from __future__ import annotations
+from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
@@ -13,13 +13,13 @@ class PIIEntityResponse(BaseModel):
     entity: str
     start: int
     end: int
-    normalized: str | None = None
+    normalized: Optional[str] = None
     level: int
 
 
 class DetectResponse(BaseModel):
     has_pii: bool
-    entities: list[PIIEntityResponse]
+    entities: List[PIIEntityResponse]
     elapsed_ms: float
     text_length: int
 
@@ -44,10 +44,10 @@ class SyntheticDataRequest(BaseModel):
 
 class AgentRunStatus(BaseModel):
     run_id: str
-    status: str  # running, completed, failed
+    status: str
     total: int
     processed: int
-    metrics: dict | None = None
+    metrics: Optional[dict] = None
     message: str = ""
 
 
@@ -60,4 +60,4 @@ class ReportSummary(BaseModel):
     accuracy: float
     false_positives: int
     false_negatives: int
-    improvements: list[str]
+    improvements: List[str]

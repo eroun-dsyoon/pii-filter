@@ -12,3 +12,4 @@ data/synthetic/*.jsonl
 reports/*.json
 .DS_Store
 *.log
+data/synthetic/errors_latest.json

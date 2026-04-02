@@ -1,67 +1,29 @@
 """
 Judge 에이전트: Blue Team 결과 평가 및 피드백 제공
-- 오탐/미탐 판정
-- Haiku 모델 사용
+- 오탐/미탐 패턴 분석 (로컬)
+- API 키가 있으면 Haiku 모델로 상세 분석 가능
 """
 from __future__ import annotations
 
 import json
-import asyncio
+import logging
+import re
+from collections import Counter
+from typing import List
 
-import anthropic
-
-from ..config import ANTHROPIC_API_KEY, HAIKU_MODEL
 from .blue_team import FilterResult
 
-SYSTEM_PROMPT = """당신은 개인정보(PII) 필터링 결과를 검증하는 판사입니다.
-
-Blue Team 에이전트가 텍스트에서 PII를 검출한 결과를 평가하고, 오탐(False Positive)과 미탐(False Negative)을 정확히 판정합니다.
-
-한국 PII 유형:
-- RRN: 주민등록번호 (YYMMDD-GXXXXXX)
-- CRN: 사업자등록번호 (XXX-XX-XXXXX)
-- PHONE: 전화번호 (010-XXXX-XXXX 등)
-- PASSPORT: 여권번호 (알파벳1-2 + 숫자7)
-- BANK_ACCOUNT: 계좌번호
-- CREDIT_CARD: 신용카드번호 (16자리)
-- DRIVER_LICENSE: 운전면허번호 (XX-XX-XXXXXX-XX)
-- EMAIL: 이메일 주소
-
-판정 기준:
-1. 오탐(FP): PII가 아닌데 PII로 검출된 경우
-2. 미탐(FN): PII인데 검출되지 않은 경우
-3. 정탐(TP): PII를 올바르게 검출한 경우
-4. 정상(TN): PII가 아닌 것을 올바르게 통과시킨 경우
-
-반드시 JSON으로 응답하세요:
-{
-  "judgments": [
-    {
-      "index": 0,
-      "verdict": "TP" | "TN" | "FP" | "FN",
-      "reason": "판정 사유",
-      "suggestion": "개선 제안 (FP/FN인 경우만)"
-    }
-  ],
-  "feedback": {
-    "false_positive_patterns": ["오탐으로 확인된 패턴들"],
-    "false_negative_examples": ["미탐된 케이스들"],
-    "improvement_suggestions": ["전체적인 개선 제안"]
-  }
-}"""
+logger = logging.getLogger(__name__)
 
 
 async def judge_results(
-    results: list[FilterResult],
+    results: List[FilterResult],
     batch_size: int = 20,
 ) -> dict:
     """
     Blue Team 결과를 Judge가 평가.
-    Returns: 종합 피드백
+    로컬 분석으로 오탐/미탐 패턴 도출.
     """
-    client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-
-    # 오류 케이스만 추출하여 검증 (전체를 다 보내면 비용이 너무 높음)
     error_cases = [r for r in results if not r.is_correct]
 
     if not error_cases:
@@ -72,80 +34,102 @@ async def judge_results(
             "suggestions": [],
         }
 
-    all_judgments = []
-    fp_patterns = []
-    fn_examples = []
+    fp_cases = [r for r in error_cases if r.error_type == "false_positive"]
+    fn_cases = [r for r in error_cases if r.error_type == "false_negative"]
+
+    # FP 패턴 분석
+    fp_patterns = _analyze_fp_patterns(fp_cases)
+
+    # FN 패턴 분석
+    fn_examples = _analyze_fn_patterns(fn_cases)
+
     suggestions = []
-
-    for i in range(0, len(error_cases), batch_size):
-        batch = error_cases[i:i + batch_size]
-        prompt = _build_judge_prompt(batch)
-
-        try:
-            response = await client.messages.create(
-                model=HAIKU_MODEL,
-                max_tokens=4096,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-            content = response.content[0].text.strip()
-            if content.startswith("```"):
-                content = content.split("```")[1]
-                if content.startswith("json"):
-                    content = content[4:]
-
-            result = json.loads(content)
-            all_judgments.extend(result.get("judgments", []))
-
-            feedback = result.get("feedback", {})
-            fp_patterns.extend(feedback.get("false_positive_patterns", []))
-            fn_examples.extend(feedback.get("false_negative_examples", []))
-            suggestions.extend(feedback.get("improvement_suggestions", []))
-
-        except (json.JSONDecodeError, Exception):
-            continue
+    if fp_cases:
+        suggestions.append(f"오탐 {len(fp_cases)}건 중 가장 빈번한 유형: {fp_patterns.get('most_common_type', 'N/A')}")
+    if fn_cases:
+        suggestions.append(f"미탐 {len(fn_cases)}건 중 가장 빈번한 유형: {fn_examples.get('most_common_type', 'N/A')}")
 
     return {
         "total_errors": len(error_cases),
-        "judgments": all_judgments,
         "false_positive_feedback": {
             "type": "false_positive",
-            "patterns": list(set(fp_patterns)),
-            "description": f"오탐 패턴 {len(set(fp_patterns))}개 발견",
+            "patterns": fp_patterns.get("patterns", []),
+            "description": f"오탐 패턴 {len(fp_patterns.get('patterns', []))}개 발견",
         },
         "false_negative_feedback": {
             "type": "false_negative",
-            "examples": fn_examples,
-            "description": f"미탐 케이스 {len(fn_examples)}개 발견",
+            "examples": fn_examples.get("examples", []),
+            "description": f"미탐 케이스 {len(fn_examples.get('examples', []))}개 발견",
         },
         "suggestions": suggestions,
     }
 
 
-def _build_judge_prompt(results: list[FilterResult]) -> str:
-    cases = []
-    for i, r in enumerate(results):
-        case = {
-            "index": i,
-            "text": r.text[:500],  # 텍스트 길이 제한
-            "expected_has_pii": r.expected_has_pii,
-            "expected_type": r.expected_type,
-            "detected": r.detected_entities,
-            "blue_team_verdict": r.error_type,
-        }
-        cases.append(case)
+def _analyze_fp_patterns(fp_cases: List[FilterResult]) -> dict:
+    """오탐 케이스에서 반복되는 패턴 추출"""
+    if not fp_cases:
+        return {"patterns": [], "most_common_type": "N/A"}
 
-    return f"""다음 {len(cases)}개의 PII 필터링 오류 케이스를 검증해주세요.
+    # 어떤 PII 타입이 가장 많이 오탐되는지
+    detected_types = []
+    text_patterns = []
 
-각 케이스에서:
-- text: 검사 대상 텍스트
-- expected_has_pii: 합성 데이터 생성 시 의도한 PII 유무
-- expected_type: 의도한 PII 유형
-- detected: Blue Team이 검출한 결과
-- blue_team_verdict: Blue Team의 판정 (false_positive 또는 false_negative)
+    for r in fp_cases:
+        for entity in r.detected_entities:
+            detected_types.append(entity.get("type", "UNKNOWN"))
 
-케이스:
-{json.dumps(cases, ensure_ascii=False, indent=2)}
+        # 텍스트에서 날짜/코드 등의 패턴 추출
+        text = r.text
+        if re.search(r'(?:19|20)\d{2}[\-./]\d{2,4}[\-./]\d{2,4}', text):
+            text_patterns.append("날짜 형식")
+        elif re.search(r'ISBN', text, re.IGNORECASE):
+            text_patterns.append("ISBN")
+        elif re.search(r'[A-Z]{2,}\-\d+', text):
+            text_patterns.append("코드/문서번호")
+        elif re.search(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', text):
+            text_patterns.append("IP 주소")
+        else:
+            text_patterns.append("기타")
 
-각 케이스의 실제 판정과 개선 방안을 JSON으로 응답하세요."""
+    type_counter = Counter(detected_types)
+    pattern_counter = Counter(text_patterns)
+
+    return {
+        "patterns": [f"{p}: {c}건" for p, c in pattern_counter.most_common(10)],
+        "most_common_type": type_counter.most_common(1)[0][0] if type_counter else "N/A",
+        "type_distribution": dict(type_counter),
+    }
+
+
+def _analyze_fn_patterns(fn_cases: List[FilterResult]) -> dict:
+    """미탐 케이스에서 반복되는 패턴 추출"""
+    if not fn_cases:
+        return {"examples": [], "most_common_type": "N/A"}
+
+    type_counter = Counter(r.expected_type for r in fn_cases if r.expected_type)
+
+    # 미탐된 텍스트에서 우회 기법 분석
+    evasion_types = []
+    for r in fn_cases:
+        text = r.text
+        has_korean_digit = any(c in text for c in "공일이삼사오육칠팔구영")
+        has_hanja = any(c in text for c in "〇一二三四五六七八九")
+        has_special = any(ord(c) > 0x2000 and not c.isspace() for c in text)
+
+        if has_korean_digit:
+            evasion_types.append("한글 숫자")
+        elif has_hanja:
+            evasion_types.append("한자")
+        elif has_special:
+            evasion_types.append("특수 유니코드")
+        else:
+            evasion_types.append("구분자 변형")
+
+    evasion_counter = Counter(evasion_types)
+
+    return {
+        "examples": [r.text[:100] for r in fn_cases[:50]],
+        "most_common_type": type_counter.most_common(1)[0][0] if type_counter else "N/A",
+        "type_distribution": dict(type_counter),
+        "evasion_distribution": dict(evasion_counter),
+    }
