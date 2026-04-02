@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PII Filter - 관리자</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">🔒 PII Filter</div>
+        <div class="nav-links">
+            <a href="/">검출</a>
+            <a href="/admin" class="active">관리자</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        <h1>관리자 페이지</h1>
+
+        <!-- 합성 데이터 생성 -->
+        <section class="admin-section">
+            <h2>합성 데이터 생성 및 모델 개선</h2>
+            <p>Red Team → Blue Team → Judge 에이전트 파이프라인을 실행합니다.</p>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>생성할 데이터 수:</label>
+                    <input type="number" id="gen-count" value="1000" min="1" max="100000">
+                </div>
+                <div class="form-group">
+                    <label>타겟 검출 레벨:</label>
+                    <select id="gen-level">
+                        <option value="1">1단계</option>
+                        <option value="2">2단계</option>
+                        <option value="3" selected>3단계</option>
+                    </select>
+                </div>
+                <button id="btn-generate" class="btn-primary" onclick="startGeneration()">파이프라인 실행</button>
+            </div>
+
+            <div id="pipeline-status" class="pipeline-status hidden">
+                <div class="status-header">
+                    <span id="pipeline-phase"></span>
+                    <span id="pipeline-state" class="badge"></span>
+                </div>
+                <div class="progress-bar">
+                    <div id="progress-fill" class="progress-fill"></div>
+                </div>
+                <p id="pipeline-message"></p>
+                <div id="pipeline-metrics" class="metrics-grid hidden"></div>
+            </div>
+        </section>
+
+        <!-- 실행 이력 -->
+        <section class="admin-section">
+            <h2>실행 이력</h2>
+            <div id="runs-list" class="runs-list">
+                <p class="loading">로딩 중...</p>
+            </div>
+        </section>
+
+        <!-- 리포트 -->
+        <section class="admin-section">
+            <h2>개선 리포트</h2>
+            <div id="reports-list" class="reports-list">
+                <p class="loading">로딩 중...</p>
+            </div>
+        </section>
+
+        <!-- 합성 데이터 파일 -->
+        <section class="admin-section">
+            <h2>합성 데이터 파일</h2>
+            <div id="data-files" class="data-files">
+                <p class="loading">로딩 중...</p>
+            </div>
+        </section>
+
+        <!-- 오탐 신고 목록 -->
+        <section class="admin-section">
+            <h2>오탐 신고 목록</h2>
+            <div id="fp-list" class="fp-list">
+                <p class="loading">로딩 중...</p>
+            </div>
+        </section>
+
+        <!-- 리포트 상세 모달 -->
+        <div id="report-modal" class="modal hidden">
+            <div class="modal-content wide">
+                <div class="modal-header">
+                    <h3>리포트 상세</h3>
+                    <button class="modal-close" onclick="closeReportModal()">&times;</button>
+                </div>
+                <div id="report-detail" class="modal-body"></div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let currentRunId = null;
+        let pollInterval = null;
+
+        async function startGeneration() {
+            const count = parseInt(document.getElementById('gen-count').value);
+            const level = parseInt(document.getElementById('gen-level').value);
+            const btn = document.getElementById('btn-generate');
+
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/admin/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ count, level }),
+                });
+                const data = await res.json();
+                currentRunId = data.run_id;
+
+                document.getElementById('pipeline-status').classList.remove('hidden');
+                updatePipelineStatus(data);
+
+                // 폴링 시작
+                pollInterval = setInterval(pollStatus, 2000);
+            } catch (err) {
+                alert('오류: ' + err.message);
+                btn.disabled = false;
+            }
+        }
+
+        async function pollStatus() {
+            if (!currentRunId) return;
+
+            try {
+                const res = await fetch(`/api/admin/status/${currentRunId}`);
+                const data = await res.json();
+                updatePipelineStatus(data);
+
+                if (data.status === 'completed' || data.status === 'failed') {
+                    clearInterval(pollInterval);
+                    document.getElementById('btn-generate').disabled = false;
+                    loadRuns();
+                    loadReports();
+                    loadDataFiles();
+                }
+            } catch (err) {
+                console.error('폴링 오류:', err);
+            }
+        }
+
+        function updatePipelineStatus(data) {
+            const phases = {
+                'red_team': '🔴 Red Team',
+                'blue_team': '🔵 Blue Team',
+                'judge': '⚖️ Judge',
+                'improvement': '📈 개선',
+                'done': '✅ 완료',
+            };
+
+            document.getElementById('pipeline-phase').textContent =
+                phases[data.phase] || data.status;
+            document.getElementById('pipeline-state').textContent = data.status;
+            document.getElementById('pipeline-state').className =
+                `badge ${data.status === 'completed' ? 'success' : data.status === 'failed' ? 'error' : 'running'}`;
+            document.getElementById('pipeline-message').textContent = data.message;
+
+            const pct = data.total > 0 ? (data.processed / data.total * 100) : 0;
+            document.getElementById('progress-fill').style.width = pct + '%';
+
+            if (data.metrics) {
+                const metricsDiv = document.getElementById('pipeline-metrics');
+                metricsDiv.classList.remove('hidden');
+                metricsDiv.innerHTML = `
+                    <div class="metric"><span class="metric-label">Precision</span><span class="metric-value">${(data.metrics.precision * 100).toFixed(1)}%</span></div>
+                    <div class="metric"><span class="metric-label">Recall</span><span class="metric-value">${(data.metrics.recall * 100).toFixed(1)}%</span></div>
+                    <div class="metric"><span class="metric-label">F1 Score</span><span class="metric-value">${(data.metrics.f1_score * 100).toFixed(1)}%</span></div>
+                    <div class="metric"><span class="metric-label">Accuracy</span><span class="metric-value">${(data.metrics.accuracy * 100).toFixed(1)}%</span></div>
+                    <div class="metric"><span class="metric-label">FP</span><span class="metric-value error">${data.metrics.false_positives}</span></div>
+                    <div class="metric"><span class="metric-label">FN</span><span class="metric-value error">${data.metrics.false_negatives}</span></div>
+                `;
+            }
+        }
+
+        async function loadRuns() {
+            try {
+                const res = await fetch('/api/admin/runs');
+                const runs = await res.json();
+                const container = document.getElementById('runs-list');
+                if (runs.length === 0) {
+                    container.innerHTML = '<p class="empty">실행 이력이 없습니다.</p>';
+                    return;
+                }
+                container.innerHTML = runs.map(r => `
+                    <div class="run-card">
+                        <div class="run-header">
+                            <span class="run-id">${r.run_id}</span>
+                            <span class="badge ${r.status === 'completed' ? 'success' : r.status === 'failed' ? 'error' : 'running'}">${r.status}</span>
+                        </div>
+                        <div class="run-info">
+                            <span>데이터: ${r.total}개</span>
+                            <span>처리: ${r.processed}개</span>
+                        </div>
+                        <p class="run-message">${r.message}</p>
+                    </div>
+                `).join('');
+            } catch (err) {
+                document.getElementById('runs-list').innerHTML = '<p class="error">로딩 실패</p>';
+            }
+        }
+
+        async function loadReports() {
+            try {
+                const res = await fetch('/api/admin/reports');
+                const reports = await res.json();
+                const container = document.getElementById('reports-list');
+                if (reports.length === 0) {
+                    container.innerHTML = '<p class="empty">리포트가 없습니다.</p>';
+                    return;
+                }
+                container.innerHTML = reports.map(r => `
+                    <div class="report-card" onclick="viewReport('${r.id}')">
+                        <div class="report-header">
+                            <span class="report-id">${r.id}</span>
+                            <span class="report-date">${new Date(r.created_at).toLocaleString('ko-KR')}</span>
+                        </div>
+                        ${r.after ? `
+                        <div class="metrics-mini">
+                            <span>P: ${(r.after.precision * 100).toFixed(1)}%</span>
+                            <span>R: ${(r.after.recall * 100).toFixed(1)}%</span>
+                            <span>F1: ${(r.after.f1_score * 100).toFixed(1)}%</span>
+                            <span>FP: ${r.after.false_positives}</span>
+                            <span>FN: ${r.after.false_negatives}</span>
+                        </div>` : ''}
+                    </div>
+                `).join('');
+            } catch (err) {
+                document.getElementById('reports-list').innerHTML = '<p class="error">로딩 실패</p>';
+            }
+        }
+
+        async function loadDataFiles() {
+            try {
+                const res = await fetch('/api/admin/synthetic-data');
+                const files = await res.json();
+                const container = document.getElementById('data-files');
+                if (files.length === 0) {
+                    container.innerHTML = '<p class="empty">합성 데이터 파일이 없습니다.</p>';
+                    return;
+                }
+                container.innerHTML = `<table class="data-table">
+                    <thead><tr><th>파일명</th><th>데이터 수</th><th>크기</th><th>생성일</th></tr></thead>
+                    <tbody>${files.map(f => `
+                        <tr>
+                            <td>${f.filename}</td>
+                            <td>${f.count.toLocaleString()}개</td>
+                            <td>${f.size_kb} KB</td>
+                            <td>${new Date(f.created_at).toLocaleString('ko-KR')}</td>
+                        </tr>
+                    `).join('')}</tbody>
+                </table>`;
+            } catch (err) {
+                document.getElementById('data-files').innerHTML = '<p class="error">로딩 실패</p>';
+            }
+        }
+
+        async function loadFPReports() {
+            try {
+                const res = await fetch('/api/report/false-positives');
+                const reports = await res.json();
+                const container = document.getElementById('fp-list');
+                if (reports.length === 0) {
+                    container.innerHTML = '<p class="empty">오탐 신고가 없습니다.</p>';
+                    return;
+                }
+                container.innerHTML = `<table class="data-table">
+                    <thead><tr><th>ID</th><th>엔티티</th><th>타입</th><th>사유</th><th>상태</th><th>날짜</th></tr></thead>
+                    <tbody>${reports.map(r => `
+                        <tr>
+                            <td>${r.id}</td>
+                            <td>${r.entity}</td>
+                            <td>${r.entity_type}</td>
+                            <td>${r.reason || '-'}</td>
+                            <td><span class="badge">${r.status}</span></td>
+                            <td>${new Date(r.created_at).toLocaleString('ko-KR')}</td>
+                        </tr>
+                    `).join('')}</tbody>
+                </table>`;
+            } catch (err) {
+                document.getElementById('fp-list').innerHTML = '<p class="error">로딩 실패</p>';
+            }
+        }
+
+        async function viewReport(id) {
+            try {
+                const res = await fetch(`/api/admin/reports/${id}`);
+                const report = await res.json();
+                const detail = document.getElementById('report-detail');
+
+                detail.innerHTML = `
+                    <h4>실행 정보</h4>
+                    <p>ID: ${report.id} | 생성일: ${new Date(report.created_at).toLocaleString('ko-KR')}</p>
+                    <p>데이터: ${report.config.count}개 | 검출 레벨: ${report.config.level}단계</p>
+
+                    <h4>성능 변화</h4>
+                    <table class="data-table">
+                        <thead><tr><th>지표</th><th>개선 전</th><th>개선 후</th><th>변화</th></tr></thead>
+                        <tbody>${report.improvements.map(i => `
+                            <tr>
+                                <td>${i.metric}</td>
+                                <td>${(i.before * 100).toFixed(2)}%</td>
+                                <td>${(i.after * 100).toFixed(2)}%</td>
+                                <td class="${i.delta >= 0 ? 'positive' : 'negative'}">${i.delta >= 0 ? '+' : ''}${(i.delta * 100).toFixed(2)}%</td>
+                            </tr>
+                        `).join('')}</tbody>
+                    </table>
+
+                    <h4>피드백 요약</h4>
+                    <p>총 오류: ${report.feedback_summary.total_errors}건</p>
+                    <p>오탐 패턴: ${report.feedback_summary.false_positive_patterns.length}개</p>
+                    <p>미탐 건수: ${report.feedback_summary.false_negative_count}건</p>
+
+                    ${report.feedback_summary.suggestions.length > 0 ? `
+                    <h4>개선 제안</h4>
+                    <ul>${report.feedback_summary.suggestions.map(s => `<li>${s}</li>`).join('')}</ul>` : ''}
+
+                    ${report.improvement_log.length > 0 ? `
+                    <h4>개선 로그</h4>
+                    ${report.improvement_log.map(l => `
+                        <div class="log-entry">
+                            <span class="log-time">${l.timestamp}</span>
+                            <span class="log-type badge">${l.type}</span>
+                            <p>${l.description}</p>
+                            ${l.action ? `<p class="log-action">${l.action}</p>` : ''}
+                        </div>
+                    `).join('')}` : ''}
+                `;
+
+                document.getElementById('report-modal').classList.remove('hidden');
+            } catch (err) {
+                alert('리포트 로딩 실패: ' + err.message);
+            }
+        }
+
+        function closeReportModal() {
+            document.getElementById('report-modal').classList.add('hidden');
+        }
+
+        // 초기 로드
+        loadRuns();
+        loadReports();
+        loadDataFiles();
+        loadFPReports();
+    </script>
+</body>
+</html>
