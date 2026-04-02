@@ -219,9 +219,11 @@ VALIDATORS = {
 def _enrich_entity(entity: PIIEntity) -> PIIEntity:
     """엔티티에 추가 정보를 부여 (은행 식별 등)"""
     if entity.type == "BANK_ACCOUNT":
+        # normalized가 있으면 우선 사용 (대체문자 정규화된 값)
         source = entity.normalized or entity.entity
         info = get_bank_info(source)
-        if info.get("bank"):
+        # 은행 식별 또는 형식 정보가 있으면 추가
+        if info.get("bank") or info.get("digits", 0) >= 10:
             entity.detail = info
     return entity
 

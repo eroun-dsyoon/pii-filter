@@ -15,7 +15,7 @@ BANK_PATTERNS: List[tuple] = [
     ((3, 4, 6), "NH농협", 13),
     ((4, 3, 6), "우리은행", 13),
     ((3, 6, 5), "하나은행", 14),
-    ((3, 3, 6), "신한은행", 12),       # KB국민도 동일 패턴 가능
+    ((3, 3, 6), "신한은행", 12),
     ((3, 2, 6), "KB국민은행", 11),
     ((6, 2, 6), "KB국민은행", 14),
     ((3, 6, 2, 3), "IBK기업은행", 14),
@@ -23,14 +23,21 @@ BANK_PATTERNS: List[tuple] = [
     ((3, 3, 6), "케이뱅크", 12),
     ((3, 2, 7), "SC제일은행", 12),
     ((2, 2, 6), "제주은행", 10),
+    # 추가 변형 패턴
+    ((3, 3, 4), "KB국민은행", 10),
+    ((3, 4, 4), "KB국민은행", 11),
+    ((4, 2, 6), "카카오뱅크", 12),
+    ((3, 4, 4, 2), "NH농협", 13),
+    ((3, 2, 5), "제주은행", 10),
 ]
 
-# 계좌번호 첫자리 기반 추가 힌트 (일부 은행)
-FIRST_DIGIT_HINTS = {
-    "1": ["KB국민은행", "우리은행"],
-    "2": ["신한은행", "SC제일은행"],
-    "3": ["IBK기업은행", "하나은행"],
-    "9": ["NH농협"],
+# 총 자릿수 → 은행 추정 (패턴 매칭 실패 시 폴백)
+DIGIT_COUNT_BANKS = {
+    10: "KB국민은행/제주은행",
+    11: "KB국민은행",
+    12: "신한은행/케이뱅크",
+    13: "우리은행/NH농협/카카오뱅크",
+    14: "하나은행/IBK기업은행",
 }
 
 
@@ -40,7 +47,6 @@ def identify_bank(account_number: str) -> Optional[str]:
     구분자(-, 공백 등)가 포함된 원본 형태를 분석.
     Returns: 은행명 또는 None
     """
-    # 숫자 그룹 추출
     groups = re.findall(r'\d+', account_number)
     if not groups:
         return None
@@ -48,31 +54,31 @@ def identify_bank(account_number: str) -> Optional[str]:
     group_lengths = tuple(len(g) for g in groups)
     total_digits = sum(group_lengths)
 
-    # 패턴 매칭
+    # 1. 완전 일치 매칭
     candidates = []
     for pattern, bank_name, expected_total in BANK_PATTERNS:
         if group_lengths == pattern:
-            candidates.append((bank_name, 100))  # 완전 일치
-        elif len(group_lengths) == len(pattern):
-            # 그룹 수 동일, 자릿수 유사 (±1 허용)
+            candidates.append((bank_name, 100))
+
+    if candidates:
+        candidates.sort(key=lambda x: -x[1])
+        return candidates[0][0]
+
+    # 2. 유사 매칭 (그룹 수 동일, 자릿수 ±1)
+    for pattern, bank_name, expected_total in BANK_PATTERNS:
+        if len(group_lengths) == len(pattern):
             close = all(abs(a - b) <= 1 for a, b in zip(group_lengths, pattern))
             if close and abs(total_digits - expected_total) <= 1:
                 candidates.append((bank_name, 70))
 
     if candidates:
-        # 가장 높은 점수 반환
         candidates.sort(key=lambda x: -x[1])
-        return candidates[0][0]
+        return candidates[0][0] + " (추정)"
 
-    # 총 자릿수 기반 추정
-    if total_digits == 11:
-        return "KB국민은행 (추정)"
-    elif total_digits == 12:
-        return "신한은행 (추정)"
-    elif total_digits == 13:
-        return "우리은행/NH농협 (추정)"
-    elif total_digits == 14:
-        return "하나은행/IBK기업은행 (추정)"
+    # 3. 총 자릿수 기반 추정
+    bank_guess = DIGIT_COUNT_BANKS.get(total_digits)
+    if bank_guess:
+        return bank_guess + " (추정)"
 
     return None
 
