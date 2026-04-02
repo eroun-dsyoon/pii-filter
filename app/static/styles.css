@@ -140,10 +140,53 @@ input[type="number"] { padding: 0.5rem 0.75rem; border: 2px solid #e2e8f0; borde
 .loading { color: #94a3b8; text-align: center; padding: 1rem; }
 .error { color: #dc2626; }
 
+/* === Pipeline Flow === */
+.pipeline-flow { display: flex; align-items: center; justify-content: center; gap: 0.25rem; margin: 1.25rem 0; padding: 1rem; background: #f8fafc; border-radius: 8px; flex-wrap: wrap; }
+.flow-step { text-align: center; padding: 0.5rem 0.75rem; background: white; border-radius: 8px; border: 1px solid #e2e8f0; min-width: 100px; }
+.flow-step small { color: #64748b; font-size: 0.7rem; }
+.flow-icon { font-size: 1.25rem; display: block; margin-bottom: 0.25rem; }
+.flow-arrow { color: #94a3b8; font-size: 1.25rem; font-weight: bold; }
+
+/* === Report Summary === */
+.report-summary { margin-top: 0.5rem; }
+.report-metric-row { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; padding: 0.2rem 0; }
+.report-metric-row .label { color: #64748b; min-width: 70px; }
+.report-metric-row .arrow { color: #94a3b8; }
+.report-metric-row .bold { font-weight: 700; }
+.positive { color: #16a34a; font-weight: 600; }
+.negative { color: #dc2626; font-weight: 600; }
+.muted { color: #94a3b8; font-style: italic; }
+.bold { font-weight: 600; }
+
+/* === Error Analysis === */
+.error-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 0.75rem 0; }
+.error-col { border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; }
+.error-col h5 { margin-bottom: 0.5rem; font-size: 0.9rem; }
+.type-dist { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.5rem; }
+.type-tag { padding: 0.15rem 0.5rem; background: #f1f5f9; border-radius: 4px; font-size: 0.8rem; font-weight: 500; }
+
+/* === Samples === */
+details { margin-top: 0.5rem; }
+details summary { cursor: pointer; font-size: 0.85rem; color: #3b82f6; font-weight: 500; }
+.sample-list { margin-top: 0.5rem; max-height: 200px; overflow-y: auto; }
+.sample-item { padding: 0.4rem 0.5rem; border-bottom: 1px solid #f1f5f9; font-size: 0.8rem; font-family: 'SF Mono', Monaco, monospace; display: flex; justify-content: space-between; gap: 0.5rem; }
+.sample-text { flex: 1; word-break: break-all; }
+.sample-detected { color: #dc2626; white-space: nowrap; font-weight: 500; }
+.sample-expected { color: #2563eb; white-space: nowrap; font-weight: 500; }
+
+/* === Improvement Log === */
+.log-entry { border-left: 3px solid #3b82f6; padding: 0.75rem 1rem; margin-bottom: 0.75rem; background: #f8fafc; border-radius: 0 8px 8px 0; }
+.log-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; }
+.action-list { margin: 0.5rem 0 0 1rem; font-size: 0.85rem; }
+.action-list li { margin-bottom: 0.25rem; color: #475569; }
+
 /* === Responsive === */
 @media (max-width: 640px) {
     .container { padding: 1rem; }
     .controls { flex-direction: column; }
     .form-row { flex-direction: column; }
     .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+    .error-comparison { grid-template-columns: 1fr; }
+    .pipeline-flow { gap: 0.5rem; }
+    .flow-arrow { display: none; }
 }
