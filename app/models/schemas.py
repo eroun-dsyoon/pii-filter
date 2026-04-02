@@ -15,6 +15,7 @@ class PIIEntityResponse(BaseModel):
     end: int
     normalized: Optional[str] = None
     level: int
+    detail: Optional[dict] = None
 
 
 class DetectResponse(BaseModel):

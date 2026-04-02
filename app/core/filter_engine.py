@@ -13,6 +13,7 @@ from typing import Optional, List, Tuple
 
 from .char_map import CHAR_TO_DIGIT, normalize_text
 from .patterns import LEVEL1_PATTERNS
+from .bank_identifier import get_bank_info
 
 
 @dataclass
@@ -23,12 +24,15 @@ class PIIEntity:
     end: int
     normalized: Optional[str] = None
     level: int = 1
+    detail: Optional[dict] = None  # 추가 정보 (은행명 등)
 
     def to_dict(self) -> dict:
         d = {"type": self.type, "entity": self.entity, "start": self.start, "end": self.end}
         if self.normalized and self.normalized != self.entity:
             d["normalized"] = self.normalized
         d["level"] = self.level
+        if self.detail:
+            d["detail"] = self.detail
         return d
 
 
@@ -212,6 +216,16 @@ VALIDATORS = {
 }
 
 
+def _enrich_entity(entity: PIIEntity) -> PIIEntity:
+    """엔티티에 추가 정보를 부여 (은행 식별 등)"""
+    if entity.type == "BANK_ACCOUNT":
+        source = entity.normalized or entity.entity
+        info = get_bank_info(source)
+        if info.get("bank"):
+            entity.detail = info
+    return entity
+
+
 class PIIFilterEngine:
     """PII 필터링 엔진"""
 
@@ -233,6 +247,9 @@ class PIIFilterEngine:
 
         # 중복 제거
         entities = self._deduplicate(entities)
+
+        # 추가 정보 부여 (은행 식별 등)
+        entities = [_enrich_entity(e) for e in entities]
 
         return entities
 

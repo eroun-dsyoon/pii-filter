@@ -188,6 +188,16 @@
             data.entities.forEach((entity, i) => {
                 const card = document.createElement('div');
                 card.className = 'entity-card';
+
+                // 계좌번호 은행 정보
+                let detailHtml = '';
+                if (entity.detail && entity.detail.bank) {
+                    detailHtml = `<div class="entity-detail">
+                        <span class="detail-bank">${escapeHtml(entity.detail.bank)}</span>
+                        <span class="detail-format">형식: ${entity.detail.format} (${entity.detail.digits}자리)</span>
+                    </div>`;
+                }
+
                 card.innerHTML = `
                     <div class="entity-header">
                         <span class="entity-type">${typeLabels[entity.type] || entity.type}</span>
@@ -195,6 +205,7 @@
                         <button class="btn-report" onclick="openFPModal('${entity.entity.replace(/'/g, "\\'")}', '${entity.type}')">오탐 신고</button>
                     </div>
                     <div class="entity-value">${escapeHtml(entity.entity)}</div>
+                    ${detailHtml}
                     ${entity.normalized ? `<div class="entity-normalized">정규화: ${escapeHtml(entity.normalized)}</div>` : ''}
                     <div class="entity-position">위치: ${entity.start}-${entity.end}</div>
                 `;
