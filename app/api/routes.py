@@ -26,7 +26,7 @@ router = APIRouter()
 async def detect(request: DetectRequest):
     """텍스트에서 PII 검출"""
     start = time.perf_counter()
-    entities = detect_pii(request.text, level=request.level)
+    entities = detect_pii(request.text, level=request.level, strict=request.strict)
     elapsed = (time.perf_counter() - start) * 1000  # ms
 
     return DetectResponse(

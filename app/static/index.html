@@ -49,6 +49,13 @@
                             <option value="3" selected>3단계 - 대체 문자 포함</option>
                         </select>
                     </div>
+                    <div class="level-selector">
+                        <label>검증 강도:</label>
+                        <select id="detect-strict">
+                            <option value="true" selected>엄격 (체크섬 + 유효성 검증)</option>
+                            <option value="false">형식만 (패턴 매칭만, 오탐 가능성 높음)</option>
+                        </select>
+                    </div>
                     <button id="btn-detect" class="btn-primary">검출 시작</button>
                 </div>
             </div>
@@ -118,6 +125,7 @@
         document.getElementById('btn-detect').addEventListener('click', async () => {
             const activeTab = document.querySelector('.tab.active').dataset.tab;
             const level = parseInt(document.getElementById('detect-level').value);
+            const strict = document.getElementById('detect-strict').value === 'true';
             const btn = document.getElementById('btn-detect');
 
             btn.disabled = true;
@@ -131,7 +139,7 @@
                     response = await fetch('/api/detect', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ text, level }),
+                        body: JSON.stringify({ text, level, strict }),
                     });
                 } else {
                     const file = document.getElementById('input-file').files[0];
@@ -198,10 +206,17 @@
                     </div>`;
                 }
 
+                const levelLabels = {
+                    1: '1단계 - 기본 형식',
+                    2: '2단계 - 구분자 변형',
+                    3: '3단계 - 대체 문자',
+                };
+                const levelClass = entity.level === 1 ? 'level-1' : entity.level === 2 ? 'level-2' : 'level-3';
+
                 card.innerHTML = `
                     <div class="entity-header">
                         <span class="entity-type">${typeLabels[entity.type] || entity.type}</span>
-                        <span class="entity-level">Level ${entity.level}</span>
+                        <span class="entity-level ${levelClass}">판별레벨 : ${levelLabels[entity.level] || entity.level + '단계'}</span>
                         <button class="btn-report" onclick="openFPModal('${entity.entity.replace(/'/g, "\\'")}', '${entity.type}')">오탐 신고</button>
                     </div>
                     <div class="entity-value">${escapeHtml(entity.entity)}</div>

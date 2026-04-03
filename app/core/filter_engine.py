@@ -155,6 +155,35 @@ def _strip_digits(text: str) -> str:
 from .validators import VALIDATORS, validate_pii
 
 
+# 형식만 검증 (체크섬/유효성 무시) - strict=False 일 때 사용
+def _format_only_rrn(digits: str) -> bool:
+    return len(digits) == 13 and digits.isdigit()
+
+def _format_only_crn(digits: str) -> bool:
+    return len(digits) == 10 and digits.isdigit()
+
+def _format_only_phone(digits: str) -> bool:
+    return digits.isdigit() and 8 <= len(digits) <= 12 and digits.startswith('0') or digits[:2] in ('15','16','18')
+
+def _format_only_credit_card(digits: str) -> bool:
+    return len(digits) == 16 and digits.isdigit()
+
+def _format_only_driver_license(digits: str) -> bool:
+    return len(digits) == 12 and digits.isdigit()
+
+def _format_only_bank_account(digits: str) -> bool:
+    return digits.isdigit() and 10 <= len(digits) <= 14
+
+FORMAT_ONLY_VALIDATORS = {
+    "RRN": _format_only_rrn,
+    "CRN": _format_only_crn,
+    "PHONE": _format_only_phone,
+    "CREDIT_CARD": _format_only_credit_card,
+    "DRIVER_LICENSE": _format_only_driver_license,
+    "BANK_ACCOUNT": _format_only_bank_account,
+}
+
+
 def _enrich_entity(entity: PIIEntity) -> PIIEntity:
     """엔티티에 추가 정보를 부여 (은행 식별 등)"""
     if entity.type == "BANK_ACCOUNT":
@@ -170,8 +199,13 @@ def _enrich_entity(entity: PIIEntity) -> PIIEntity:
 class PIIFilterEngine:
     """PII 필터링 엔진"""
 
-    def __init__(self, level: int = 3):
+    def __init__(self, level: int = 3, strict: bool = True):
+        """
+        level: 검출 레벨 (1=기본형식, 2=구분자변형, 3=대체문자)
+        strict: True=체계 기반 검증(체크섬/유효성), False=형식만 검증
+        """
         self.level = level
+        self.strict = strict
 
     def detect(self, text: str) -> list:
         """텍스트에서 PII를 검출"""
@@ -201,6 +235,13 @@ class PIIFilterEngine:
         r'참조번호|인증번호|도서번호',
         re.IGNORECASE,
     )
+
+    def _get_validator(self, pii_type: str):
+        """strict 모드에 따라 적절한 validator 반환"""
+        if self.strict:
+            return VALIDATORS.get(pii_type)
+        else:
+            return FORMAT_ONLY_VALIDATORS.get(pii_type)
 
     def _is_excluded_context(self, text: str, start: int, end: int) -> bool:
         """오탐 방지: 특정 문맥에서는 PII로 판단하지 않음"""
@@ -237,7 +278,7 @@ class PIIFilterEngine:
                 entity_text = match.group()
                 digits = _strip_digits(entity_text)
 
-                validator = VALIDATORS.get(pii_type)
+                validator = self._get_validator(pii_type)
                 if validator and not validator(digits):
                     continue
 
@@ -263,7 +304,7 @@ class PIIFilterEngine:
                 if not self._validate_level2_separators(entity_text, pii_type):
                     continue
 
-                validator = VALIDATORS.get(pii_type)
+                validator = self._get_validator(pii_type)
                 if validator and not validator(digits):
                     continue
 
@@ -314,6 +355,10 @@ class PIIFilterEngine:
 
         all_patterns = LEVEL1_PATTERNS + LEVEL2_PATTERNS
         for pii_type, pattern in all_patterns:
+            # 이메일은 Level 3 대상 아님 (숫자 대체문자 개념 없음)
+            if pii_type == "EMAIL":
+                continue
+
             for match in pattern.finditer(normalized):
                 entity_norm = match.group()
                 digits = _strip_digits(entity_norm)
@@ -335,10 +380,11 @@ class PIIFilterEngine:
                     if len(digits) < 7:
                         continue
                 elif pii_type in TEXT_VALIDATORS:
-                    if not TEXT_VALIDATORS[pii_type](entity_norm):
+                    if self.strict and not TEXT_VALIDATORS[pii_type](entity_norm):
                         continue
-                elif pii_type in VALIDATORS:
-                    if not VALIDATORS[pii_type](digits):
+                else:
+                    validator = self._get_validator(pii_type)
+                    if validator and not validator(digits):
                         continue
 
                 norm_start = match.start()
@@ -435,19 +481,23 @@ class PIIFilterEngine:
         return result
 
 
-# 싱글톤
-_default_engine = None
+# 싱글톤 캐시
+_engine_cache = {}
 
 
-def get_engine(level: int = 3) -> PIIFilterEngine:
-    global _default_engine
-    if _default_engine is None or _default_engine.level != level:
-        _default_engine = PIIFilterEngine(level=level)
-    return _default_engine
+def get_engine(level: int = 3, strict: bool = True) -> PIIFilterEngine:
+    key = (level, strict)
+    if key not in _engine_cache:
+        _engine_cache[key] = PIIFilterEngine(level=level, strict=strict)
+    return _engine_cache[key]
 
 
-def detect_pii(text: str, level: int = 3) -> list:
-    """텍스트에서 PII를 검출하여 dict 리스트로 반환"""
-    engine = get_engine(level)
+def detect_pii(text: str, level: int = 3, strict: bool = True) -> list:
+    """
+    텍스트에서 PII를 검출하여 dict 리스트로 반환.
+    strict=True: 체계 기반 검증 (체크섬, 유효 지역코드 등)
+    strict=False: 형식만 검증 (자릿수만 맞으면 검출)
+    """
+    engine = get_engine(level, strict)
     entities = engine.detect(text)
     return [e.to_dict() for e in entities]

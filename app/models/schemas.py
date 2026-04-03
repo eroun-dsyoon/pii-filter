@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class DetectRequest(BaseModel):
     text: str = Field(..., description="검사할 텍스트")
     level: int = Field(default=3, ge=1, le=3, description="검출 레벨 (1-3)")
+    strict: bool = Field(default=True, description="True=체계 기반 검증, False=형식만 검증")
 
 
 class PIIEntityResponse(BaseModel):
