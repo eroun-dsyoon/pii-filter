@@ -17,13 +17,35 @@ CRN_PATTERN = re.compile(
     r'\b(\d{3})[-](\d{2})[-](\d{5})\b'
 )
 
-# 전화번호: 010-xxxx-xxxx, 02-xxx-xxxx, 0xx-xxx(x)-xxxx
+# 전화번호: 모든 한국 전화번호 체계
+# 휴대폰: 010/011/016/017/018/019-XXXX-XXXX
+# VoIP: 070-XXXX-XXXX
+# 수신자부담: 080-XXX(X)-XXXX
+# 안심번호: 0502/0504/0505/0507-XXX(X)-XXXX
+# 서울: 02-XXX(X)-XXXX
+# 지역: 031~064-XXX(X)-XXXX
+# 대표번호: 15XX-XXXX, 16XX-XXXX
 PHONE_PATTERN = re.compile(
+    # 휴대폰
     r'\b(01[016789])[-](\d{3,4})[-](\d{4})\b'
     r'|'
+    # VoIP (인터넷전화)
+    r'\b(070)[-](\d{3,4})[-](\d{4})\b'
+    r'|'
+    # 수신자부담
+    r'\b(080)[-](\d{3,4})[-](\d{4})\b'
+    r'|'
+    # 안심번호/부가통신 (4자리 국번)
+    r'\b(050[2-8])[-](\d{3,4})[-](\d{4})\b'
+    r'|'
+    # 서울
     r'\b(02)[-](\d{3,4})[-](\d{4})\b'
     r'|'
+    # 지역번호
     r'\b(0[3-6]\d)[-](\d{3,4})[-](\d{4})\b'
+    r'|'
+    # 대표번호 (15XX, 16XX, 18XX)
+    r'\b(1[5-8]\d{2})[-](\d{4})\b'
 )
 
 # 여권번호: 알파벳 1-2자리 + 숫자 7자리
@@ -53,7 +75,7 @@ EMAIL_PATTERN = re.compile(
 
 
 # 각 패턴과 PII 타입 매핑
-LEVEL1_PATTERNS: list[tuple[str, re.Pattern]] = [
+LEVEL1_PATTERNS = [
     ("RRN", RRN_PATTERN),
     ("CRN", CRN_PATTERN),
     ("PHONE", PHONE_PATTERN),

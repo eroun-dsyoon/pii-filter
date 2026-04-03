@@ -109,10 +109,14 @@ LEVEL2_PATTERNS.append(("RRN", re.compile(_rrn_l2)))
 _crn_l2 = _build_level2_pattern([(3, 3), (2, 2), (5, 5)])
 LEVEL2_PATTERNS.append(("CRN", re.compile(_crn_l2)))
 
-# 전화번호: 010/011/016/017/018/019-3~4-4 또는 02-3~4-4
-_phone_l2_mobile = _build_level2_pattern([(3, 3), (3, 4), (4, 4)])
-_phone_l2_seoul = _build_level2_pattern([(2, 2), (3, 4), (4, 4)])
-LEVEL2_PATTERNS.append(("PHONE", re.compile(f'(?:{_phone_l2_mobile}|{_phone_l2_seoul})')))
+# 전화번호: 모든 체계
+_phone_l2_mobile = _build_level2_pattern([(3, 3), (3, 4), (4, 4)])   # 010, 070, 080
+_phone_l2_seoul = _build_level2_pattern([(2, 2), (3, 4), (4, 4)])    # 02
+_phone_l2_virtual = _build_level2_pattern([(4, 4), (3, 4), (4, 4)])  # 0502, 0505
+_phone_l2_rep = _build_level2_pattern([(4, 4), (4, 4)])              # 1588, 1577
+LEVEL2_PATTERNS.append(("PHONE", re.compile(
+    f'(?:{_phone_l2_mobile}|{_phone_l2_seoul}|{_phone_l2_virtual}|{_phone_l2_rep})'
+)))
 
 # 여권번호: 영문1-2 + 숫자7
 LEVEL2_PATTERNS.append(("PASSPORT", re.compile(r'[A-Z]{1,2}' + r'(?:\s*)' + _flexible_digits(7))))

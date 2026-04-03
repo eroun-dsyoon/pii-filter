@@ -87,10 +87,14 @@ def validate_crn(digits: str) -> bool:
 
 
 # ============================================================
-# 3. 전화번호 (Phone) - 9~11자리
-# 휴대폰: 010/011/016/017/018/019-3~4자리-4자리
-# 서울: 02-3~4자리-4자리
-# 지역: 031~064-3~4자리-4자리
+# 3. 전화번호 (Phone)
+# 휴대폰: 010/011/016/017/018/019-XXXX-XXXX
+# 서울: 02-XXX(X)-XXXX
+# 지역: 031~064-XXX(X)-XXXX
+# 인터넷전화(VoIP): 070-XXXX-XXXX
+# 안심번호/부가서비스: 0502/0504/0505/0507-XXX(X)-XXXX
+# 수신자부담: 080-XXX(X)-XXXX
+# 대표번호: 1588/1577/1544/1566/1600/1670 등-XXXX
 # ============================================================
 
 VALID_MOBILE_PREFIXES = {'010', '011', '016', '017', '018', '019'}
@@ -116,29 +120,60 @@ VALID_AREA_CODES = {
     '064',  # 제주
 }
 
+# VoIP (인터넷전화)
+VALID_VOIP_PREFIXES = {'070'}
+
+# 안심번호/부가통신: 0502, 0504, 0505, 0507 등
+VALID_VIRTUAL_PREFIXES = {'0502', '0504', '0505', '0506', '0507', '0508'}
+
+# 수신자부담
+VALID_TOLL_FREE_PREFIXES = {'080'}
+
+# 대표번호 (15XX, 16XX)
+VALID_REPRESENTATIVE_PREFIXES = {
+    '1588', '1577', '1544', '1566', '1600', '1670', '1599',
+    '1644', '1660', '1661', '1688', '1666', '1899', '1800',
+    '1811', '1833', '1855', '1877',
+}
+
 
 def validate_phone(digits: str) -> bool:
-    """전화번호 유효성 검증"""
+    """전화번호 유효성 검증 (모든 한국 전화번호 체계 포함)"""
     if not digits.isdigit():
         return False
     length = len(digits)
-    if length < 9 or length > 11:
+
+    # 대표번호: 15XX-XXXX, 16XX-XXXX (8자리)
+    if length == 8 and digits[:4] in VALID_REPRESENTATIVE_PREFIXES:
+        return True
+
+    if length < 9 or length > 12:
         return False
 
-    # 휴대폰
+    # 휴대폰: 010/011/016/017/018/019
     if digits[:3] in VALID_MOBILE_PREFIXES:
-        # 010-XXXX-XXXX (11자리) 또는 011-XXX-XXXX (10자리)
         return 10 <= length <= 11
 
-    # 서울: 02-XXX(X)-XXXX
+    # VoIP (인터넷전화): 070-XXXX-XXXX (11자리)
+    if digits[:3] in VALID_VOIP_PREFIXES:
+        return length == 11
+
+    # 수신자부담: 080-XXX(X)-XXXX (10~11자리)
+    if digits[:3] in VALID_TOLL_FREE_PREFIXES:
+        return 10 <= length <= 11
+
+    # 안심번호/부가통신: 0502/0505 등-XXX(X)-XXXX (11~12자리)
+    if digits[:4] in VALID_VIRTUAL_PREFIXES:
+        return 11 <= length <= 12
+
+    # 서울: 02-XXX(X)-XXXX (9~10자리)
     if digits.startswith('02'):
         return 9 <= length <= 10
 
-    # 지역번호: 0XX-XXX(X)-XXXX
+    # 지역번호: 031~064-XXX(X)-XXXX (10~11자리)
     if digits[:3] in VALID_AREA_CODES:
         return 10 <= length <= 11
 
-    # 유효하지 않은 지역번호
     return False
 
 
