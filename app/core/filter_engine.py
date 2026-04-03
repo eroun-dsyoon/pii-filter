@@ -142,8 +142,47 @@ LEVEL2_PATTERNS.append(("CREDIT_CARD", re.compile(_cc_l2)))
 _dl_l2 = _build_level2_pattern([(2, 2), (2, 2), (6, 6), (2, 2)])
 LEVEL2_PATTERNS.append(("DRIVER_LICENSE", re.compile(_dl_l2)))
 
-# 이메일
-LEVEL2_PATTERNS.append(("EMAIL", re.compile(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}')))
+# 이메일 Level 2: 공백이 삽입된 이메일 (구분자 변형)
+# 패턴 1: @ 앞뒤, . 앞뒤 공백 허용
+# 패턴 2: 모든 문자 사이 공백 허용 (d s yoon @ eroun . a i)
+_EMAIL_L2 = re.compile(
+    r'(?:[A-Za-z0-9._%+\-]\s*){2,}@\s*(?:[A-Za-z0-9\-]\s*){1,}(?:\.\s*(?:[A-Za-z]\s*){2,})'
+)
+LEVEL2_PATTERNS.append(("EMAIL", _EMAIL_L2))
+
+
+def _validate_email_l2(text: str) -> bool:
+    """Level 2 이메일 검증: 공백 제거 후 RFC 기본 규칙 확인"""
+    stripped = re.sub(r'\s+', '', text)
+
+    if stripped.count('@') != 1:
+        return False
+    if '.' not in stripped:
+        return False
+
+    local, domain = stripped.split('@')
+
+    if not local or len(local) > 64:
+        return False
+    if local.startswith('.') or local.endswith('.'):
+        return False
+    if '..' in local:
+        return False
+
+    if not domain or len(domain) > 255:
+        return False
+    if '..' in domain:
+        return False
+
+    domain_parts = domain.split('.')
+    if len(domain_parts) < 2:
+        return False
+
+    tld = domain_parts[-1]
+    if len(tld) < 2 or not tld.isalpha():
+        return False
+
+    return True
 
 
 def _strip_digits(text: str) -> str:
@@ -300,6 +339,30 @@ class PIIFilterEngine:
             for match in pattern.finditer(text):
                 entity_text = match.group()
                 digits = _strip_digits(entity_text)
+
+                # 이메일 Level 2: 공백 제거 후 별도 검증
+                if pii_type == "EMAIL":
+                    if not _validate_email_l2(entity_text):
+                        continue
+                    # 공백이 포함된 경우만 Level 2로 (공백 없으면 Level 1에서 처리)
+                    normalized_email = re.sub(r'\s+', '', entity_text)
+                    has_spaces = normalized_email != entity_text.strip()
+                    if not has_spaces:
+                        continue  # Level 1과 동일하므로 스킵
+
+                    start = match.start()
+                    end = match.end()
+                    if self._is_excluded_context(text, start, end):
+                        continue
+                    results.append(PIIEntity(
+                        type=pii_type,
+                        entity=entity_text.strip(),
+                        start=start,
+                        end=end,
+                        normalized=normalized_email,
+                        level=2,
+                    ))
+                    continue
 
                 if not self._validate_level2_separators(entity_text, pii_type):
                     continue
@@ -458,7 +521,8 @@ class PIIFilterEngine:
         if not entities:
             return []
 
-        entities.sort(key=lambda e: (e.start, -e.end, -e.level))
+        # 같은 위치면 낮은 레벨(더 정확한 매칭)을 우선
+        entities.sort(key=lambda e: (e.start, -e.end, e.level))
 
         result = []
         for entity in entities:
