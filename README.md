@@ -97,6 +97,12 @@ pii-filter/
 │   │   └── schemas.py        # Pydantic 스키마
 │   └── static/               # 웹 UI
 ├── data/synthetic/           # 합성 데이터
+├── sdk/
+│   ├── __init__.py           # from sdk import detect
+│   └── pii_detector.py       # 개발자용 판별 함수
+├── docs/
+│   ├── 개발자_적용가이드.md    # 적용 및 테스트 설명서
+│   └── CLAUDE_CODE_실무가이드.md  # 개발 과정 가이드
 ├── reports/                  # 개선 리포트
 └── tests/
 ```
