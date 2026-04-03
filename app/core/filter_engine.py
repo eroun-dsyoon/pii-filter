@@ -147,73 +147,8 @@ def _strip_digits(text: str) -> str:
     return ''.join(c for c in text if c.isdigit())
 
 
-def _validate_rrn(digits: str) -> bool:
-    if len(digits) != 13:
-        return False
-    month = int(digits[2:4])
-    day = int(digits[4:6])
-    gender = int(digits[6])
-    if month < 1 or month > 12:
-        return False
-    if day < 1 or day > 31:
-        return False
-    if gender < 1 or gender > 4:
-        return False
-    return True
-
-
-def _validate_phone(digits: str) -> bool:
-    if len(digits) < 9 or len(digits) > 11:
-        return False
-    # 휴대폰: 010/011/016/017/018/019
-    if digits.startswith('01'):
-        return digits[:3] in ('010', '011', '016', '017', '018', '019')
-    # 서울 지역번호: 02 (9~10자리)
-    if digits.startswith('02'):
-        return 9 <= len(digits) <= 10
-    # 기타 지역번호: 031~064 (10~11자리)
-    if digits.startswith('0') and digits[1] in '3456':
-        area = digits[:3]
-        area_num = int(area)
-        if 31 <= area_num <= 64:
-            return 10 <= len(digits) <= 11
-    return False
-
-
-def _validate_credit_card(digits: str) -> bool:
-    if len(digits) != 16:
-        return False
-    total = 0
-    for i, d in enumerate(reversed(digits)):
-        n = int(d)
-        if i % 2 == 1:
-            n *= 2
-            if n > 9:
-                n -= 9
-        total += n
-    return total % 10 == 0
-
-
-def _validate_bank_account(digits: str) -> bool:
-    """계좌번호 유효성 검증 (Judge 피드백: 자릿수 범위 제한)"""
-    length = len(digits)
-    # 한국 계좌번호는 일반적으로 10~14자리
-    if length < 10 or length > 14:
-        return False
-    # 앞 4자리가 연도(2000~2099)로 시작하면 날짜/주문번호일 가능성 높음
-    if length >= 4:
-        first4 = int(digits[:4])
-        if 2000 <= first4 <= 2099:
-            return False
-    return True
-
-
-VALIDATORS = {
-    "RRN": _validate_rrn,
-    "PHONE": _validate_phone,
-    "CREDIT_CARD": _validate_credit_card,
-    "BANK_ACCOUNT": _validate_bank_account,
-}
+# 체계 기반 검증 모듈 import
+from .validators import VALIDATORS, validate_pii
 
 
 def _enrich_entity(entity: PIIEntity) -> PIIEntity:
@@ -255,11 +190,23 @@ class PIIFilterEngine:
 
         return entities
 
+    # 비PII 문맥 키워드 (앞 30자 이내에 있으면 제외)
+    _CONTEXT_EXCLUDE_KEYWORDS = re.compile(
+        r'송장|택배|배송|운송장|tracking|parcel|주문번호|관리번호|'
+        r'시리얼|serial|제품번호|코드번호|식별코드|사원번호|예약번호|'
+        r'참조번호|인증번호|도서번호',
+        re.IGNORECASE,
+    )
+
     def _is_excluded_context(self, text: str, start: int, end: int) -> bool:
         """오탐 방지: 특정 문맥에서는 PII로 판단하지 않음"""
-        # 매칭된 부분의 앞뒤 문맥 확인
-        context_before = text[max(0, start - 20):start]
-        matched = text[start:end]
+        context_before = text[max(0, start - 30):start]
+        context_after = text[end:min(len(text), end + 10)]
+        full_context = context_before + text[start:end] + context_after
+
+        # 비PII 문맥 키워드
+        if self._CONTEXT_EXCLUDE_KEYWORDS.search(context_before):
+            return True
 
         # 영문 접두사가 붙은 코드 (DOC-2024-03-0456 등)
         if _CODE_PREFIX_PATTERN.search(text[max(0, start - 10):end]):
@@ -367,9 +314,28 @@ class PIIFilterEngine:
                 entity_norm = match.group()
                 digits = _strip_digits(entity_norm)
 
-                validator = VALIDATORS.get(pii_type)
-                if validator and not validator(digits):
-                    continue
+                # Level 3 검증: 정규화된 값으로 validator 호출
+                from .validators import TEXT_VALIDATORS
+                if pii_type == "PASSPORT":
+                    # 여권: 원본에서 영문자 확인 후 정규화 값으로 검증
+                    # Leet 변환이 영문자를 숫자로 바꿔버리므로 원본 기반 확인
+                    norm_s = match.start()
+                    norm_e = match.end()
+                    o_s, o_e = self._map_to_original(norm_s, norm_e, text, normalized, mappings)
+                    orig_part = text[o_s:o_e]
+                    # 원본에 영문자가 있으면 여권으로 간주
+                    has_alpha = any(c.isalpha() for c in orig_part)
+                    if not has_alpha:
+                        continue
+                    # 영문 1~2자리 + 숫자 7자리 형식 확인
+                    if len(digits) < 7:
+                        continue
+                elif pii_type in TEXT_VALIDATORS:
+                    if not TEXT_VALIDATORS[pii_type](entity_norm):
+                        continue
+                elif pii_type in VALIDATORS:
+                    if not VALIDATORS[pii_type](digits):
+                        continue
 
                 norm_start = match.start()
                 norm_end = match.end()
