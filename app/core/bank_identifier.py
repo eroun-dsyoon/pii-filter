@@ -54,6 +54,10 @@ def identify_bank(account_number: str) -> Optional[str]:
     group_lengths = tuple(len(g) for g in groups)
     total_digits = sum(group_lengths)
 
+    # 각 그룹이 최소 2자리 이상이어야 유효한 계좌번호 형식
+    if any(l < 2 for l in group_lengths):
+        return None
+
     # 1. 완전 일치 매칭
     candidates = []
     for pattern, bank_name, expected_total in BANK_PATTERNS:
