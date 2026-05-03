@@ -13,3 +13,34 @@ reports/*.json
 .DS_Store
 *.log
 data/synthetic/errors_latest.json
+
+# === Security additions (2026-05-03) ===
+# AI tool configs
+.claude/
+.cursor/
+.aider*
+.continue/
+.codex/
+
+# Environment files (모든 변형)
+.env
+.env.*
+!.env.example
+
+# Secrets & keys
+*.pem
+*.key
+*.p12
+credentials.json
+service-account*.json
+.npmrc
+.pypirc
+
+# Cloud credentials
+.aws/
+.ssh/
+.docker/config.json
+.kube/config
+.terraform/
+*.tfstate
+*.tfstate.backup
