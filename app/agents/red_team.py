@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Tuple, List, Optional, Callable
 
 import anthropic
+from pydantic import BaseModel
 
 from ..config import ANTHROPIC_API_KEY, HAIKU_MODEL, DATA_DIR
 
@@ -32,15 +33,20 @@ SYSTEM_PROMPT = """당신은 개인정보 필터링 시스템을 테스트하기
 - Level 2: 다양한 구분자 (010 - 1234 _ 5678, 공백/하이픈/언더스코어/마침표 혼용)
 - Level 3: 대체 문자 (한글 숫자, 한자, Leet speak, 이모지, 전각 문자, 위첨자/아래첨자 등)
 
-반드시 JSON 배열로 응답하세요. 각 항목:
-{
-  "text": "생성된 텍스트",
-  "has_pii": true/false,
-  "pii_type": "PHONE" 또는 null,
-  "pii_value": "정규화된 값" 또는 null,
-  "evasion_level": 1/2/3 또는 null,
-  "evasion_technique": "사용된 우회 기법 설명" 또는 null
-}"""
+각 항목의 pii_value는 정규화된 값, pii_type은 PHONE 같은 유형 코드입니다. PII가 없는 항목은 pii_type·pii_value·evasion_level·evasion_technique를 null로 둡니다."""
+
+
+class SyntheticItem(BaseModel):
+    text: str
+    has_pii: bool
+    pii_type: Optional[str]
+    pii_value: Optional[str]
+    evasion_level: Optional[int]
+    evasion_technique: Optional[str]
+
+
+class SyntheticBatch(BaseModel):
+    items: List[SyntheticItem]
 
 
 def _build_generation_prompt(count: int, level: int) -> str:
@@ -55,7 +61,7 @@ def _build_generation_prompt(count: int, level: int) -> str:
 
     level_desc = "\n".join(f"- Level {l}: {d}" for l, d in techniques_by_level.items() if l <= level)
 
-    return f"""다음 조건으로 합성 데이터 {count}개를 JSON 배열로 생성하세요:
+    return f"""다음 조건으로 합성 데이터 {count}개를 생성하세요:
 
 - PII 포함 데이터: {pii_count}개 (다양한 PII 유형과 우회 기법 사용)
 - 정상 데이터 (PII 미포함): {normal_count}개
@@ -72,39 +78,7 @@ PII 포함 데이터 생성 시:
 정상 데이터 생성 시:
 - 숫자가 포함되지만 개인정보가 아닌 텍스트 (주문번호, 모델명, 가격 등)
 - 개인정보와 형식이 비슷하지만 실제로는 아닌 것들
-- 일상적인 문장
-
-JSON 배열만 응답하세요. 다른 텍스트는 포함하지 마세요."""
-
-
-def _extract_json_array(text: str) -> list:
-    """응답 텍스트에서 JSON 배열 추출"""
-    text = text.strip()
-
-    # 코드블록 제거
-    if "```" in text:
-        parts = text.split("```")
-        for part in parts:
-            part = part.strip()
-            if part.startswith("json"):
-                part = part[4:].strip()
-            if part.startswith("["):
-                try:
-                    return json.loads(part)
-                except json.JSONDecodeError:
-                    continue
-
-    # 직접 JSON 파싱
-    if text.startswith("["):
-        return json.loads(text)
-
-    # [ 부터 ] 까지 추출
-    start = text.find("[")
-    end = text.rfind("]")
-    if start != -1 and end != -1:
-        return json.loads(text[start:end + 1])
-
-    raise json.JSONDecodeError("No JSON array found", text, 0)
+- 일상적인 문장"""
 
 
 async def generate_synthetic_data(
@@ -137,17 +111,20 @@ async def generate_synthetic_data(
         for attempt in range(max_retries + 1):
             try:
                 logger.info(f"배치 생성 요청: {batch}개 (남은: {remaining}, 시도: {attempt + 1})")
-                response = await client.messages.create(
+                response = await client.messages.parse(
                     model=HAIKU_MODEL,
-                    max_tokens=4096,
+                    max_tokens=16000,
                     system=SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": prompt}],
+                    output_format=SyntheticBatch,
                 )
 
-                content = response.content[0].text
-                batch_data = _extract_json_array(content)
+                if response.stop_reason == "max_tokens":
+                    logger.warning("응답이 max_tokens에서 잘림, 재시도...")
+                    continue
+                batch_data = [item.model_dump() for item in response.parsed_output.items]
 
-                if isinstance(batch_data, list) and len(batch_data) > 0:
+                if len(batch_data) > 0:
                     all_data.extend(batch_data)
                     logger.info(f"배치 생성 완료: {len(batch_data)}개 (누적: {len(all_data)})")
                     success = True
@@ -155,8 +132,6 @@ async def generate_synthetic_data(
                 else:
                     logger.warning(f"빈 배치 결과, 재시도...")
 
-            except json.JSONDecodeError as e:
-                logger.warning(f"JSON 파싱 실패 (시도 {attempt + 1}): {e}")
             except anthropic.APIError as e:
                 logger.error(f"Anthropic API 오류: {e}")
                 errors.append(str(e))
